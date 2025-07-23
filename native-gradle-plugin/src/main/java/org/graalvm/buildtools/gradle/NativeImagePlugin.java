@@ -297,6 +297,7 @@ public class NativeImagePlugin implements Plugin<Project> {
             task.getOutputDirectories().set(graalExtension.getAgent().getMetadataCopy().getOutputDirectories());
             task.getMergeWithExisting().set(graalExtension.getAgent().getMetadataCopy().getMergeWithExisting());
             task.getToolchainDetection().set(graalExtension.getToolchainDetection());
+            task.getJavaLauncher().set(graalExtension.getAgent().getMetadataCopy().getJavaLauncher());
         });
 
         project.getTasks().register("collectReachabilityMetadata", CollectReachabilityMetadata.class, task -> {
