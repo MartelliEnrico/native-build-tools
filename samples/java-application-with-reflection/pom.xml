@@ -51,9 +51,9 @@
     <properties>
         <java.version>1.8</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <junit.jupiter.version>5.11.0</junit.jupiter.version>
-        <native.maven.plugin.version>0.11.0-SNAPSHOT</native.maven.plugin.version>
-        <junit.platform.native.version>0.11.0-SNAPSHOT</junit.platform.native.version>
+        <junit.jupiter.version>5.13.0</junit.jupiter.version>
+        <native.maven.plugin.version>0.11.1-SNAPSHOT</native.maven.plugin.version>
+        <junit.platform.native.version>0.11.1-SNAPSHOT</junit.platform.native.version>
         <imageName>example-app</imageName>
         <mainClass>org.graalvm.demo.Application</mainClass>
     </properties>
@@ -275,7 +275,9 @@
                                 <enabled>true</enabled>
                                 <defaultMode>Direct</defaultMode>
                                 <modes>
-                                    <direct>config-output-dir=/tmp,builtin-caller-filter=true,builtin-heuristic-filter=true,experimental-class-define-support=false,experimental-unsafe-allocation-support=false,track-reflection-metadata=true</direct>
+                                    <direct>
+                                        config-output-dir=/tmp,builtin-caller-filter=true,builtin-heuristic-filter=true,experimental-class-define-support=false,experimental-unsafe-allocation-support=false,track-reflection-metadata=true
+                                    </direct>
                                 </modes>
                                 <options>
                                     <builtinCallerFilter>true</builtinCallerFilter>

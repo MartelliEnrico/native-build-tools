@@ -168,6 +168,9 @@ public abstract class AbstractNativeImageMojo extends AbstractNativeMojo {
     @Parameter(property = "jvmArgs")
     protected List<String> jvmArgs;
 
+    @Parameter(property = "runtimeArgs")
+    protected List<String> runtimeArgs;
+
     @Parameter(property = NATIVE_IMAGE_DRY_RUN, defaultValue = "false")
     protected boolean dryRun;
 
@@ -373,6 +376,10 @@ public abstract class AbstractNativeImageMojo extends AbstractNativeMojo {
         }
     }
 
+    protected void addInferredDependenciesToClasspath() {
+
+    }
+
     @Override
     protected void maybeAddDependencyMetadata(Artifact dependency, Consumer<File> excludeAction) {
         if (isExcluded(dependency)) {
@@ -422,6 +429,7 @@ public abstract class AbstractNativeImageMojo extends AbstractNativeMojo {
             populateApplicationClasspath();
             addDependenciesToClasspath();
         }
+        addInferredDependenciesToClasspath();
         imageClasspath.removeIf(entry -> !entry.toFile().exists());
     }
 

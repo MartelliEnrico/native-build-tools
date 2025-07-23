@@ -60,7 +60,7 @@ import org.eclipse.aether.resolution.ArtifactResult;
 import org.eclipse.aether.resolution.DependencyRequest;
 import org.eclipse.aether.resolution.DependencyResolutionException;
 import org.eclipse.aether.resolution.DependencyResult;
-import org.graalvm.buildtools.utils.FileUtils;
+import org.graalvm.buildtools.utils.JUnitPlatformNativeDependenciesHelper;
 import org.graalvm.buildtools.utils.JUnitUtils;
 import org.graalvm.buildtools.utils.NativeImageConfigurationUtils;
 
@@ -71,12 +71,13 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
+import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -122,8 +123,8 @@ public class NativeTestMojo extends AbstractNativeImageMojo {
     }
 
     @Override
-    protected void addDependenciesToClasspath() throws MojoExecutionException {
-        super.addDependenciesToClasspath();
+    protected void addInferredDependenciesToClasspath() {
+        super.addInferredDependenciesToClasspath();
         Set<Module> modules = new HashSet<>();
         //noinspection SimplifyStreamApiCallChains
         pluginArtifacts.stream()
@@ -169,6 +170,9 @@ public class NativeTestMojo extends AbstractNativeImageMojo {
         }
         systemProperties.put("junit.platform.listeners.uid.tracking.output.dir",
             NativeExtension.testIdsDirectory(outputDirectory.getAbsolutePath()));
+        if (runtimeArgs == null) {
+            runtimeArgs = new ArrayList<>();
+        }
 
         imageName = NATIVE_TESTS_EXE;
         mainClass = "org.graalvm.junit.platform.NativeImageJUnitLauncher";
@@ -178,32 +182,36 @@ public class NativeTestMojo extends AbstractNativeImageMojo {
     }
 
     private void configureEnvironment() {
-        // inherit from surefire mojo
-        Plugin plugin = project.getPlugin("org.apache.maven.plugins:maven-surefire-plugin");
-        if (plugin != null) {
+        List<Plugin> plugins = new ArrayList<>();
+
+        Plugin surefire = project.getPlugin("org.apache.maven.plugins:maven-surefire-plugin");
+        if (surefire != null) {
+            plugins.add(surefire);
+        }
+
+        Plugin failsafe = project.getPlugin("org.apache.maven.plugins:maven-failsafe-plugin");
+        if (failsafe != null) {
+            plugins.add(failsafe);
+        }
+
+        for (Plugin plugin : plugins) {
             Object configuration = plugin.getConfiguration();
             if (configuration instanceof Xpp3Dom) {
                 Xpp3Dom dom = (Xpp3Dom) configuration;
-                Xpp3Dom environmentVariables = dom.getChild("environmentVariables");
-                if (environmentVariables != null) {
-                    Xpp3Dom[] children = environmentVariables.getChildren();
-                    if (environment == null) {
-                        environment = new HashMap<>(children.length);
-                    }
-                    for (Xpp3Dom child : children) {
-                        environment.put(child.getName(), child.getValue());
-                    }
-                }
-                Xpp3Dom systemProps = dom.getChild("systemPropertyVariables");
-                if (systemProps != null) {
-                    Xpp3Dom[] children = systemProps.getChildren();
-                    if (systemProperties == null) {
-                        systemProperties = new HashMap<>(children.length);
-                    }
-                    for (Xpp3Dom child : children) {
-                        systemProperties.put(child.getName(), child.getValue());
-                    }
-                }
+                applyPluginProperties(dom.getChild("environmentVariables"), environment);
+                applyPluginProperties(dom.getChild("systemPropertyVariables"), systemProperties);
+            }
+        }
+    }
+
+    private void applyPluginProperties(Xpp3Dom pluginProperty, Map<String, String> values) {
+        if (pluginProperty != null) {
+            Xpp3Dom[] children = pluginProperty.getChildren();
+            if (values == null) {
+                values = new HashMap<>(children.length);
+            }
+            for (Xpp3Dom child : children) {
+                values.put(child.getName(), child.getValue());
             }
         }
     }
@@ -235,6 +243,7 @@ public class NativeTestMojo extends AbstractNativeImageMojo {
             command.add("--xml-output-dir");
             command.add(xmlLocation.toString());
             systemProperties.forEach((key, value) -> command.add("-D" + key + "=" + value));
+            command.addAll(runtimeArgs);
 
             processBuilder.command().addAll(command);
             processBuilder.environment().putAll(environment);
@@ -280,34 +289,80 @@ public class NativeTestMojo extends AbstractNativeImageMojo {
                                             && path.getFileName().toString().startsWith(prefix)));
     }
 
-    private List<Path> findJunitPlatformNativeJars(Set<Module> modulesAlreadyOnClasspath) {
+    private DependencyResult resolveDependencies(Consumer<? super CollectRequest> configurer) {
         RepositorySystemSession repositorySession = mavenSession.getRepositorySession();
         DefaultRepositorySystemSession newSession = new DefaultRepositorySystemSession(repositorySession);
         CollectRequest collectRequest = new CollectRequest();
         List<RemoteRepository> repositories = project.getRemoteProjectRepositories();
         collectRequest.setRepositories(repositories);
-        DefaultArtifact artifact = new DefaultArtifact(
-            RuntimeMetadata.GROUP_ID,
-            RuntimeMetadata.JUNIT_PLATFORM_NATIVE_ARTIFACT_ID,
-            null,
-            "jar",
-            RuntimeMetadata.VERSION
-        );
-        Dependency dependency = new Dependency(artifact, "runtime");
-        collectRequest.addDependency(dependency);
+        configurer.accept(collectRequest);
         DependencyRequest dependencyRequest = new DependencyRequest(collectRequest, null);
-        DependencyResult dependencyResult;
         try {
-            dependencyResult = repositorySystem.resolveDependencies(newSession, dependencyRequest);
+            return repositorySystem.resolveDependencies(newSession, dependencyRequest);
         } catch (DependencyResolutionException e) {
-            return Collections.emptyList();
+            return e.getResult();
         }
+    }
+
+    private List<Path> findJunitPlatformNativeJars(Set<Module> modulesAlreadyOnClasspath) {
+        DependencyResult dependencyResult;
+        dependencyResult = resolveDependencies(collectRequest -> {
+            var artifact = new DefaultArtifact(
+                RuntimeMetadata.GROUP_ID,
+                RuntimeMetadata.JUNIT_PLATFORM_NATIVE_ARTIFACT_ID,
+                null,
+                "jar",
+                RuntimeMetadata.VERSION
+            );
+            var dependency = new Dependency(artifact, "runtime");
+            collectRequest.addDependency(dependency);
+            addMissingDependencies(collectRequest);
+        });
         return dependencyResult.getArtifactResults()
             .stream()
             .map(ArtifactResult::getArtifact)
+            .filter(Objects::nonNull)
             .filter(a -> !modulesAlreadyOnClasspath.contains(new Module(a.getGroupId(), a.getArtifactId())))
             .map(a -> a.getFile().toPath())
             .collect(Collectors.toList());
+    }
+
+    private void addMissingDependencies(CollectRequest collectRequest) {
+        // it's a chicken-and-egg problem, we need to resolve the dependencies first, in order
+        // to have the list of dependencies which are present and infer the ones which are missing
+        var current = resolveDependencies(request -> {
+            for (var dependency : project.getDependencies()) {
+                if (!dependency.isOptional()) {
+                    request.addDependency(new Dependency(
+                        new DefaultArtifact(
+                            dependency.getGroupId(),
+                            dependency.getArtifactId(),
+                            dependency.getClassifier(),
+                            "jar",
+                            dependency.getVersion()
+                        ),
+                        "runtime"
+                    ));
+                }
+            }
+        });
+        var currentClasspath = current.getArtifactResults().stream()
+            .map(result -> new JUnitPlatformNativeDependenciesHelper.DependencyNotation(
+                result.getArtifact().getGroupId(),
+                result.getArtifact().getArtifactId(),
+                result.getArtifact().getVersion()
+            )).toList();
+        var deps = JUnitPlatformNativeDependenciesHelper.inferMissingDependenciesForTestRuntime(currentClasspath);
+        for (var missing : deps) {
+            var missingDependency = new Dependency(new DefaultArtifact(
+                missing.groupId(),
+                missing.artifactId(),
+                null,
+                null,
+                missing.version()
+            ), "runtime");
+            collectRequest.addDependency(missingDependency);
+        }
     }
 
     private static final class Module {
